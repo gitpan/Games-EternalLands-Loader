@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use vars qw($VERSION);
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 =head1 NAME
 
@@ -39,12 +39,15 @@ use File::Spec::Functions;
 use Games::EternalLands::Binary::Float16;
 use Games::EternalLands::Binary::Unitvec16;
 
-my @_COMP_EXTS = qw(gz zip bz2 Z xz);
-my $_LOAD_EXCP = "_LOAD_EXCP:";
+use constant {
+  _COMP_EXTS => [qw(gz zip bz2 Z xz)],
+  _MAP_SIG => 'elmf',
+  _ENT_SIG => 'e3dx',
+};
 
-sub _err {
+sub _fail {
   my ($s, $m) = @_;
-  die $_LOAD_EXCP . $m;
+  croak "_FAILED_" . $m;
 }
 
 sub _setup_parser {
@@ -66,75 +69,75 @@ typedef ushort float16;
 typedef ushort unitvec16;
 
 typedef struct {
-	char signature[4];
+  char signature[4];
   byte version[4];
   byte md5_digest[16];
-	uint entity_data_offset;
+  uint entity_data_offset;
 } entity_header;
 
 typedef struct {
-	uint vertex_element_count;
-	uint vertex_element_size;
-	uint vertex_data_offset;
-	uint index_element_count;
-	uint index_element_size;
-	uint index_data_offset;
-	uint submesh_element_count;
- 	uint submesh_element_size;
-	uint submesh_data_offset;
-  struct vertex_field_flags {
+  uint vertex_element_count;
+  uint vertex_element_size;
+  uint vertex_data_offset;
+  uint index_element_count;
+  uint index_element_size;
+  uint index_data_offset;
+  uint submesh_element_count;
+  uint submesh_element_size;
+  uint submesh_data_offset;
+  struct {
     byte normals:1;
     byte tangents:1;
     byte twotextures:1;
     byte colors:1;
     byte :4;
-  };
-  struct vertex_type_flags {
+  } vertex_field_flags;
+  struct {
     byte float16_positions:1;
     byte float16_uv1s:1;
     byte float16_uv2s:1;
     byte quantized_unit_vectors:1;
     byte :4;
-  };
-  byte :8[2];
+  } vertex_type_flags;
+  byte __unused[2];
 } mesh_header;
 
 typedef struct {
-	char entity_name[80];
+  char entity_name[80];
   float position[3];
   float rotation[3];
-	byte lighting_disabled;
-	byte blending_level;
-  byte :8[2];
+  byte lighting_disabled;
+  byte blending_level;
+  byte __unused[2];
   float color[3];
   float scale;
-  byte :8[20];
+  byte __unused[20];
 } mesh_object;
 
 typedef struct {
-	char entity_name[80];
+  char entity_name[80];
   float position[3];
   float rotation[3];
-  byte :8[24];
+  byte __unused[24];
 } quad_object;
 
 typedef struct {
   float position[3];
   float color[3];
-  byte :8[16];
+  byte __unused[16];
 } light_object;
 
 typedef struct {
   char entity_name[80];
   float position[3];
-  byte :8[12];
+  byte __unused[12];
 } fuzz_object;
 
 typedef struct {
   char signature[4];
   uint terrain_map_length;
   uint terrain_map_breadth;
-	uint terrain_map_offset;
+  uint terrain_map_offset;
   uint tile_map_offset;
   uint mesh_object_size;
   uint mesh_object_count;
@@ -146,13 +149,13 @@ typedef struct {
   uint light_object_count;
   uint light_data_offset;
   byte flag_indoors;
-  byte :8[3];
+  byte __unused[3];
   float ambient_light[3];
   uint fuzz_object_size;
   uint fuzz_object_count;
   uint fuzz_data_offset;
   uint segment_data_offset;
-  byte :8[36];
+  byte __unused[36];
 } map_header;
 EOS
   $c->tag($_, Format => 'String') for qw(
@@ -163,14 +166,14 @@ EOS
     map_header.signature
   );
   $c->tag('float16', Hooks => { unpack => sub {
-    Games::EternalLands::Binary::Float16::unpack($_[0])
+    Games::EternalLands::Binary::Float16::unpack_float16($_[0])
   }});
   $c->tag('unitvec16', Hooks => { unpack => sub {
-    Games::EternalLands::Binary::Unitvec16::unpack($_[0])
+    Games::EternalLands::Binary::Unitvec16::unpack_unitvec16($_[0])
   }});
   $c->tag('entity_header.version', Hooks => { unpack => sub {
-    my @v = @$_[0];
-    return $v[0] * 1000 + $v[1] * 100 + $v[2] * 10 + $v[3];
+    my $v = $_[0];
+    return $v->[0] * 1000 + $v->[1] * 100 + $v->[2] * 10 + $v->[3];
   }});
   $s->{parser} = $c;
 }
@@ -181,12 +184,12 @@ sub _locate {
   for my $p (@$a) {
     my $b = catfile $p, $n;
     return $b if -e $b;
-    for my $e (@_COMP_EXTS) {
+    for my $e (_COMP_EXTS) {
       my $t = "$b.$e";
       return $t if -e $t;
     }
   }
-  $s->_err("Failed to find '$n' in search path:\n  ".join("\n  ", @$a));
+  $s->_fail("Failed to find '$n' in search path: @$a");
 }
 
 sub _open {
@@ -194,7 +197,7 @@ sub _open {
   my $p = $s->_locate($n);
   my $f = new IO::Uncompress::AnyUncompress $p;
   $f = new IO::File $p if not $f;
-  $s->_err("Failed to open '$p': $!") if not $f;
+  $s->_fail("Failed to open '$p': $!") if not $f;
   return $f;
 }
 
@@ -215,7 +218,7 @@ sub _unp {
   $s->_parse_c($x) if defined $x;
   my $l = $c->sizeof($t);
   my $r = length $d;
-  $s->_err("Need to unpack $l bytes at offset $o,"
+  $s->_fail("Need to unpack $l bytes at offset $o,"
     . " but data has length only $r")
     if $o + $l > $r;
   my $p = substr $d, $o, $l;
@@ -259,7 +262,7 @@ sub _unpack_objects {
   my $ka = $k.'_objects';
   my $hs = $h->{$kt.'_size'};
   my $ts = $s->{parser}->sizeof($kt);
-  $s->_err("Size mismatch for '$kt': "
+  $s->_fail("Size mismatch for '$kt': "
     . "header has $hs, but type is $ts")
     unless $hs == $ts;
   my $kc = $h->{$kt.'_count'};
@@ -280,15 +283,12 @@ sub _assign_ids {
 
 sub _load_map {
   my ($s, $n) = @_;
-  my $d = do {
-    local $\;
-    my $f = $s->_open($n);
-    <$f>;
-  };
+  my $f = $s->_open($n);
+  my $d = join '', <$f>;
   my $h = $s->_unp(map_header => $d);
   my $g = $h->{signature};
-  $s->_err("Map '$n' has wrong file signature: \"$g\"")
-    if $g ne 'elmf';
+  $s->_fail("Map '$n' has wrong file signature: \"$g\"")
+    if $g ne _MAP_SIG;
   my $m = {
     name => $n,
     indoors => $h->{flag_indoors},
@@ -309,7 +309,7 @@ sub _load_quad {
   my @v = qw(texture file_x_len file_y_len
     x_size y_size u_start u_end v_start v_end);
   for my $k (@v) {
-    $s->_err("Missing expected field '$k' in '$n'")
+    $s->_fail("Missing expected field '$k' in '$n'")
       unless exists $d{$k};
   }
   my $ix = $d{file_x_len};
@@ -342,16 +342,16 @@ sub _load_quad {
 sub _check_header {
   my ($s, $n, $h, $d) = @_;
   my $es = $h->{signature};
-  $s->_err("Wrong signature in entity file header for '$n': $es")
-    unless $es eq 'e3dx';
+  $s->_fail("Wrong signature in entity file header for '$n': $es")
+    unless $es eq _ENT_SIG;
   my $hc = join '', map { sprintf "%02x", $_ } @{$h->{md5_digest}};
   my $fc = md5_hex(substr $d, $h->{entity_data_offset});
-  $s->_err("Checksum mismatch for '$n':\n"
+  $s->_fail("Checksum mismatch for '$n':\n"
     . "  Expected from header: $hc\n"
     . "  Calculated from file: $fc\n")
     unless $hc eq $fc;
   my $v = $h->{version};
-  $s->_err("Unrecognized entity file version for '$n': $v")
+  $s->_fail("Unrecognized entity file version for '$n': $v")
     unless $v == 1000 or $v == 1100;
 }
 
@@ -370,7 +370,7 @@ sub _make_vertex_type {
   my ($s, $h) = @_;
   my $f = $h->{vertex_field_flags};
   my $t = $h->{vertex_type_flags};
-  my $g = join '_', values %$f, values %$t;
+  my $g = join '_', (values %$f, values %$t);
   my $v = "_vertex_type_$g";
   return $v if $s->{parser}->def($v);
 
@@ -397,7 +397,7 @@ sub _make_vertex_type {
     $d .= "  $k $n ".($a?"[$a]":'').";\n" if $e;
   }
   $d .= "} $v;\n";
-  $s->parse_c($d);
+  $s->_parse_c($d);
   return $v;
 }
 
@@ -410,14 +410,14 @@ sub _make_submesh_type {
   return $t if $c->def($t);
   my $d = <<'EOS';
 typedef struct {
-	uint texture_flags;
-	char texture_name[128];
-	float minimum_position[3];
-	float maximum_position[3];
-	uint minimum_vertex_index;
-	uint maximum_vertex_index;
-	uint index_element_offset;
-	uint index_element_count;
+  uint texture_flags;
+  char texture_name[128];
+  float minimum_position[3];
+  float maximum_position[3];
+  uint minimum_vertex_index;
+  uint maximum_vertex_index;
+  uint index_element_offset;
+  uint index_element_count;
 EOS
   $d .= "  char texture2_name[128];" if $x;
   $d .= "} $t;\n";
@@ -430,11 +430,8 @@ EOS
 
 sub _load_mesh {
   my ($s, $n) = @_;
-  my $d = do {
-    local $\;
-    my $f = $s->_open($n);
-    <$f>;
-  };
+  my $f = $s->_open($n);
+  my $d = join '', <$f>;
   my $c = $s->{parser};
   my $e = { name => $n };
   my $eh = $s->_unp(entity_header => $d);
@@ -446,7 +443,7 @@ sub _load_mesh {
   my $vt = $s->_make_vertex_type($mh);
   my $ve = $c->sizeof($vt);
   my $vs = $mh->{vertex_element_size};
-  $s->_err("Unexpected vertex element size"
+  $s->_fail("Unexpected vertex element size"
     . " for mesh entity '$n': $vs (expected $ve)")
     unless $ve == $vs;
   my $vn = $mh->{vertex_element_count};
@@ -461,7 +458,7 @@ sub _load_mesh {
   my $st = $s->_make_submesh_type($mh);
   my $se = $c->sizeof($st);
   my $ss = $mh->{submesh_element_size};
-  $s->_err("Unexpected submesh element size"
+  $s->_fail("Unexpected submesh element size"
     . " for mesh entity '$n': $ss (expected $se)")
     unless $se == $ss;
   my $sn = $mh->{submesh_element_count};
@@ -499,7 +496,8 @@ sub new {
 Sets the directory where the content files are located. The
 argument may be a string to set a single path, or an array
 reference to set multiple paths to be used in turn. If no
-argument is given the current value is returned.
+argument is given the current value (an array reference)
+is returned.
 
 =cut
 
@@ -513,6 +511,16 @@ sub content_path {
   } else {
     croak "Expecting a string or array reference.";
   }
+}
+
+sub _load {
+  my ($s, $n) = @_;
+  my $l;
+  for my $e (reverse split /\./, $n) {
+    last if $l = $s->{loaders}{$e};
+  }
+  $s->_fail("No loader found for '$n'") unless $l;
+  return $s->$l($n);
 }
 
 =head2 load
@@ -537,13 +545,10 @@ See L</"DATA STRUCTURES"> for what exactly is returned in each case.
 sub load {
   my ($s, $n) = @_;
   croak "Content name argument expected" if not defined $n;
-  my ($t) = $n =~ /([^.]*)$/;
-  my $l = $s->{loaders}{$t};
-  croak "No loader found for '$n'" unless $l;
-  my $e = eval { $s->$l($n); };
+  my $e = eval { $s->_load($n); };
   if ($@) {
     my $x = $@;
-    if ($x =~ s/^\Q$_LOAD_EXCP\E//) {
+    if ($x =~ s/^_FAILED_//) {
       chomp $x;
       $s->{errstr} = $x;
       return;
@@ -585,34 +590,34 @@ Maps returned by L</"load"> have at least the following fields:
 
 =over
 
-=item name
+=item B<name>
 
 The argument passed to load that resulted in this map.
 
-=item indoors
+=item B<indoors>
 
 A boolean flag indicating whether this is map represents a location
 inside a building, cave, etc., or outside.
 
-=item ambient_light
+=item B<ambient_light>
 
 A 3 element array containing floating-point RGB values.
 
-=item terrain_length
+=item B<terrain_length>
 
 Number of terrain squares in the first linear dimension of the map
 (corresponding to the world x-axis).
 
-=item terrain_breadth
+=item B<terrain_breadth>
 
 Number of terrain squares in the second linear dimension of the map
 (corresponding to the world y-axis).
 
-=item terrain_count
+=item B<terrain_count>
 
 Total number of terrain squares on the map.
 
-=item terrain_map
+=item B<terrain_map>
 
 A one-dimensional array containing the terrain number for each
 terrain coordinate. It contains exactly C<terrain_count> elements.
@@ -642,21 +647,21 @@ Some maps will refer to missing terrain textures; these are
 simply ignored rather than being a fatal error. Depending on
 your application you may wish to notify the user with a warning.
 
-=item tile_length
+=item B<tile_length>
 
 Number of tiles in the first linear dimension of the map
 (corresponding to the world x-axis).
 
-=item tile_breadth
+=item B<tile_breadth>
 
 Number of tiles in the second linear dimension of the map
 (corresponding to the world y-axis).
 
-=item tile_count
+=item B<tile_count>
 
 Total number of tiles on the map.
 
-=item tile_map
+=item B<tile_map>
 
 An array of length C<tile_count> containing an integer height
 value for each tile. Given tile coordinates C<($x, $y)>, the
@@ -671,63 +676,67 @@ Otherwise the value maps to a coordinate along the world z-axis as
 
 NOTE: When drawing the map the tile's height value affects only
 where dynamic entities such as players, bags, etc. are drawn;
-texture squares are always drawn at C<z = 0> in world space
-(except water tiles, which are drawn at C<z = -0.25>).
+terrain squares are always drawn at C<z = 0> in world space
+(except for water terrains, which are drawn at C<z = -0.25>).
 
-=item mesh_objects
-
-An array of hashes each containing at least the fields:
-
-=over
-
-=item entity_name - entity this object is an instance of
-
-=item id - numeric identifier for this object
-
-=item position - 3-element array containing world coordinates
-
-=item rotation - 3-element array containing degree rotations about each axis
-
-=item scale - scaling factor for all three dimensions
-
-=back
-
-=item quad_objects
+=item B<mesh_objects>
 
 An array of hashes each containing at least the fields:
 
 =over
 
-=item entity_name - entity this object is an instace of
+=item B<entity_name> - entity this object is an instance of
 
-=item id - numeric identifier for this object
+=item B<id> - numeric identifier for this object
 
-=item position - 3-element array containing world coordinates
+=item B<position> - 3-element array containing world coordinates
 
-=item rotation - 3-element array containing degree rotations about each axis
+=item B<rotation> - 3-element array containing degree rotations about each axis
+
+=item B<scale> - scaling factor for all three dimensions
 
 =back
 
-=item light_objects
+=item B<quad_objects>
 
 An array of hashes each containing at least the fields:
 
 =over
 
-=item position - 3-element array containing world coordinates
+=item B<entity_name> - entity this object is an instace of
 
-=item color - floating-point RGB vector
+=item B<id> - numeric identifier for this object
+
+=item B<position> - 3-element array containing world coordinates
+
+=item B<rotation> - 3-element array containing degree rotations about each axis
 
 =back
 
-=item fuzz_objects
+=item B<light_objects>
+
+An array of hashes each containing at least the fields:
+
+=over
+
+=item B<position> - 3-element array containing world coordinates
+
+=item B<color> - floating-point RGB vector
+
+=back
+
+=item B<fuzz_objects>
 
 An array of hashes representing particle systems
 each containing at least the fields:
 
-=item entity_name - entity this object is an instace of
+=over
 
-=item position - 3-element array containing world coordinates
+=item B<entity_name> - entity this object is an instace of
+
+=item B<position> - 3-element array containing world coordinates
+
+=back
 
 =back
 
@@ -741,56 +750,56 @@ textures in some cases).
 
 =over
 
-=item vertices
+=item B<vertices>
 
 An array of hashes each containing:
 
 =over
 
-=item position - 3-element array containing the world coordinates of this vertex
+=item B<position> - 3-element array containing the world coordinates of this vertex
 
-=item uv - 2-element array containing texture coordinates
+=item B<uv> - 2-element array containing texture coordinates
 
-=item uv2 - 2-element array containing secondary texture coordinates I<(OPTIONAL)>
+=item B<uv2> - 2-element array containing secondary texture coordinates I<(OPTIONAL)>
 
-=item normal - 3-element array representing the normal vector for this vertex I<(OPTIONAL)>
+=item B<normal> - 3-element array representing the normal vector for this vertex I<(OPTIONAL)>
 
-=item tangent - 3-element array representing the tangent vector for this vertex I<(OPTIONAL)>
+=item B<tangent> - 3-element array representing the tangent vector for this vertex I<(OPTIONAL)>
 
-=item color - 4-element floating-point RGBA color vector I<(OPTIONAL)>
+=item B<color> - 4-element floating-point RGBA color vector I<(OPTIONAL)>
 
 =back
 
-NOTE: Some fields may not appear, but for any given mesh all vertices will
+B<NOTE:> Some fields may not appear, but for any given mesh all vertices will
 have the same fields present.
 
-=item indices
+=item B<indices>
 
 An array containing indices into the C<vertices> array for each
 triangular face. So the first three elements correspond to the three
 vertices making up the first triangle, the second three the second
 triangle, and so on.
 
-=item submeshes
+=item B<submeshes>
 
 An array of hashes each containing at least:
 
 =over
 
-=item texture_name - game asset name of the texture applied to this submesh
+=item B<texture_name> - game asset name of the texture applied to this submesh
 
-=item minimum_vertex_index - the smallest index into the C<vertices> array of any
+=item B<minimum_vertex_index> - the smallest index into the C<vertices> array of any
 vertex in this submesh
 
-=item maximum_vertex_index - the largest index into the C<vertices> array of any
+=item B<maximum_vertex_index> - the largest index into the C<vertices> array of any
 vertex in this submesh
 
-=item index_element_count - the number of elements of the C<indices> array used
+=item B<index_element_count> - the number of elements of the C<indices> array used
 by this submesh
 
-=item index_element_offset - where this submesh starts in the C<indices> array
+=item B<index_element_offset> - where this submesh starts in the C<indices> array
 
-=item texture2_name - name of the secondary texture I<(OPTIONAL)>
+=item B<texture2_name> - name of the secondary texture I<(OPTIONAL)>
 
 =back
 
@@ -805,11 +814,11 @@ submeshes.
 
 =over
 
-=item texture_name - asset name of the texture applied to this entity
+=item B<texture_name> - asset name of the texture applied to this entity
 
-=item vertices - array of hashes each containing fields C<position>, C<uv> and C<normal>
+=item B<vertices> - array of hashes each containing fields B<position>, B<uv> and B<normal>
 
-=item indices - array of integers giving the vertices in each triangle face
+=item B<indices> - array of integers giving the vertices in each triangle face
 
 =back
 
