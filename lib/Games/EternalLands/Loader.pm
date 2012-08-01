@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use vars qw($VERSION);
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 =head1 NAME
 
@@ -18,14 +18,20 @@ Games::EternalLands::Loader - Access Eternal Lands content files
     my $loader = Games::EternalLands::Loader->new;
     $loader->content_path('/usr/share/games/eternal-lands');
     
+    use Data::Dumper;
+
     my $map = $loader->load('maps/startmap.elm');
+    print Dumper($map);
+
     my $entity = $loader->load('3dobjects/bag1.e3d');
+    print Dumper($entity);
+
     ...
 
 =head1 ABSTRACT
 
-This module parses Eternal Lands game content files to produce
-corresponding perl objects.
+This module reads binary content files for the online game Eternal Lands
+and unpacks them into perl data structures.
 
 =cut
 
@@ -292,6 +298,7 @@ sub _load_map {
   my $m = {
     name => $n,
     indoors => $h->{flag_indoors},
+    ambient_light => $h->{ambient_light},
   };
   $s->_unpack_terrain($m, $h, $d);
   $s->_unpack_objects(mesh => $m, $h, $d);
@@ -324,10 +331,10 @@ sub _load_quad {
   my $y0 = - $sy / 2.0;
   my $x1 = $x0 + $sx;
   my $y1 = $y0 + $sy;
-  my $z = 0.0;
+  my $z = 0.001;
   my $nr = [0.0, 0.0, 1.0];
   my $e = {
-    texture_name => catfile(dirname($n), $d{texture}),
+    texture_name => $d{texture},
     vertices => [
       { position => [$x0, $y0, $z], uv => [$u0, $v0], normal => $nr, },
       { position => [$x0, $y1, $z], uv => [$u0, $v1], normal => $nr, },
@@ -685,15 +692,15 @@ An array of hashes each containing at least the fields:
 
 =over
 
-=item B<entity_name> - entity this object is an instance of
+=item B<entity_name> - Entity this object is an instance of.
 
-=item B<id> - numeric identifier for this object
+=item B<id> - Numeric identifier for this object.
 
-=item B<position> - 3-element array containing world coordinates
+=item B<position> - 3-element array containing world coordinates.
 
-=item B<rotation> - 3-element array containing degree rotations about each axis
+=item B<rotation> - 3-element array containing degree rotations about each axis.
 
-=item B<scale> - scaling factor for all three dimensions
+=item B<scale> - Scaling factor for all three dimensions.
 
 =back
 
@@ -703,13 +710,13 @@ An array of hashes each containing at least the fields:
 
 =over
 
-=item B<entity_name> - entity this object is an instace of
+=item B<entity_name> - Entity this object is an instance of.
 
-=item B<id> - numeric identifier for this object
+=item B<id> - Numeric identifier for this object.
 
-=item B<position> - 3-element array containing world coordinates
+=item B<position> - 3-element array containing world coordinates.
 
-=item B<rotation> - 3-element array containing degree rotations about each axis
+=item B<rotation> - 3-element array containing degree rotations about each axis.
 
 =back
 
@@ -719,9 +726,9 @@ An array of hashes each containing at least the fields:
 
 =over
 
-=item B<position> - 3-element array containing world coordinates
+=item B<position> - 3-element array containing world coordinates.
 
-=item B<color> - floating-point RGB vector
+=item B<color> - Floating-point RGB vector.
 
 =back
 
@@ -732,9 +739,9 @@ each containing at least the fields:
 
 =over
 
-=item B<entity_name> - entity this object is an instace of
+=item B<entity_name> - Entity this object is an instance of.
 
-=item B<position> - 3-element array containing world coordinates
+=item B<position> - 3-element array containing world coordinates.
 
 =back
 
@@ -756,17 +763,17 @@ An array of hashes each containing:
 
 =over
 
-=item B<position> - 3-element array containing the world coordinates of this vertex
+=item B<position> - 3-element array containing the world coordinates of this vertex.
 
-=item B<uv> - 2-element array containing texture coordinates
+=item B<uv> - 2-element array containing texture coordinates.
 
-=item B<uv2> - 2-element array containing secondary texture coordinates I<(OPTIONAL)>
+=item B<uv2> - 2-element array containing secondary texture coordinates I<(OPTIONAL)>.
 
-=item B<normal> - 3-element array representing the normal vector for this vertex I<(OPTIONAL)>
+=item B<normal> - 3-element array representing the normal vector for this vertex I<(OPTIONAL)>.
 
-=item B<tangent> - 3-element array representing the tangent vector for this vertex I<(OPTIONAL)>
+=item B<tangent> - 3-element array representing the tangent vector for this vertex I<(OPTIONAL)>.
 
-=item B<color> - 4-element floating-point RGBA color vector I<(OPTIONAL)>
+=item B<color> - 4-element floating-point RGBA color vector I<(OPTIONAL)>.
 
 =back
 
@@ -786,20 +793,22 @@ An array of hashes each containing at least:
 
 =over
 
-=item B<texture_name> - game asset name of the texture applied to this submesh
+=item B<texture_name> - Image file containing the texture applied to this submesh. I<NOTE:>
+It is given relative to the full path of the entity, without the leading content
+sub-directories.
 
-=item B<minimum_vertex_index> - the smallest index into the C<vertices> array of any
-vertex in this submesh
+=item B<minimum_vertex_index> - The smallest index into the C<vertices> array of any
+vertex in this submesh.
 
-=item B<maximum_vertex_index> - the largest index into the C<vertices> array of any
-vertex in this submesh
+=item B<maximum_vertex_index> - The largest index into the C<vertices> array of any
+vertex in this submesh.
 
-=item B<index_element_count> - the number of elements of the C<indices> array used
-by this submesh
+=item B<index_element_count> - The number of elements of the C<indices> array used
+by this submesh.
 
-=item B<index_element_offset> - where this submesh starts in the C<indices> array
+=item B<index_element_offset> - Where this submesh starts in the C<indices> array.
 
-=item B<texture2_name> - name of the secondary texture I<(OPTIONAL)>
+=item B<texture2_name> - Name of the secondary texture I<(OPTIONAL)>.
 
 =back
 
@@ -814,11 +823,13 @@ submeshes.
 
 =over
 
-=item B<texture_name> - asset name of the texture applied to this entity
+=item B<texture_name> - Image file containing the texture applied to this submesh. I<NOTE:>
+It is given relative to the full path of the entity, without the leading content
+sub-directories.
 
-=item B<vertices> - array of hashes each containing fields B<position>, B<uv> and B<normal>
+=item B<vertices> - Array of hashes each containing fields B<position>, B<uv> and B<normal>.
 
-=item B<indices> - array of integers giving the vertices in each triangle face
+=item B<indices> - Array of integers giving the vertices in each triangle face.
 
 =back
 

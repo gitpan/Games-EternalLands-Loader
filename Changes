@@ -5,3 +5,6 @@ Revision history for Games-EternalLands-Loader
 
 0.02    20120717
         Fixed bugs and cleaned up a few things.
+
+0.03    20120801
+        Fixed mistakenly omitted map field.

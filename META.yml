@@ -28,4 +28,4 @@ requires:
   IO::File: 0
   IO::Uncompress::AnyUncompress: 0
   Test::More: 0
-version: 0.02
+version: 0.03
